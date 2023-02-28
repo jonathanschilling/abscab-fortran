@@ -26,6 +26,8 @@ we kindly ask you to cite [the corresponding article](https://doi.org/10.1016/j.
 
 This is the Fortran implementation of [ABSCAB](https://github.com/jonathanschilling/abscab).
 
+![Build & Test](https://github.com/jonathanschilling/abscab-fortran/actions/workflows/build.yml/badge.svg)
+
 | description         | link to file |
 | ------------------- | ----------------------------------------------------- |
 | main implementation | [`abscab.f08`](abscab/abscab.f08)           |

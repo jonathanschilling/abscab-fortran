@@ -1,0 +1,13 @@
+name: build
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout sources
+        uses: actions/checkout@master
+      - name: compile
+        run: make
+      - name: run tests
+        run: make test

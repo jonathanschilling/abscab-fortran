@@ -8,10 +8,10 @@ subroutine testStraightWireSegment(status)
     integer, intent(inout) :: status
 
     character(len=*), parameter :: &
-        filename_rP    = "../resources/testPointsRpStraightWireSegment.dat", &
-        filename_zP    = "../resources/testPointsZpStraightWireSegment.dat", &
-        filename_A_z   = "../resources/StraightWireSegment_A_z_ref.dat", &
-        filename_B_phi = "../resources/StraightWireSegment_B_phi_ref.dat"
+        filename_rP    = "test/resources/testPointsRpStraightWireSegment.dat", &
+        filename_zP    = "test/resources/testPointsZpStraightWireSegment.dat", &
+        filename_A_z   = "test/resources/StraightWireSegment_A_z_ref.dat", &
+        filename_B_phi = "test/resources/StraightWireSegment_B_phi_ref.dat"
 
     real(wp), parameter :: tolerance_A_z   = 1.0e-15_wp, &
                            tolerance_B_phi = 1.0e-15_wp
@@ -134,11 +134,11 @@ subroutine testCircularWireLoop(status)
     integer, intent(inout) :: status
 
     character(len=*), parameter :: &
-        filename_rP    = "../resources/testPointsRpCircularWireLoop.dat", &
-        filename_zP    = "../resources/testPointsZpCircularWireLoop.dat", &
-        filename_A_phi = "../resources/CircularWireLoop_A_phi_ref.dat", &
-        filename_B_rho = "../resources/CircularWireLoop_B_rho_ref.dat", &
-        filename_B_z   = "../resources/CircularWireLoop_B_z_ref.dat"
+        filename_rP    = "test/resources/testPointsRpCircularWireLoop.dat", &
+        filename_zP    = "test/resources/testPointsZpCircularWireLoop.dat", &
+        filename_A_phi = "test/resources/CircularWireLoop_A_phi_ref.dat", &
+        filename_B_rho = "test/resources/CircularWireLoop_B_rho_ref.dat", &
+        filename_B_z   = "test/resources/CircularWireLoop_B_z_ref.dat"
 
     real(wp), parameter :: tolerance_A_phi = 1.0e-15_wp, &
                            tolerance_B_rho = 1.0e-13_wp, &
@@ -440,6 +440,7 @@ program test_abscab
         print *, "test_abscab: all test(s) passed :-)"
     else
         print *, "test_abscab: some test(s) failed :-("
+        stop -1
     end if
 
 end program ! test_abscab

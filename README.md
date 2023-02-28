@@ -28,7 +28,7 @@ This is the Fortran implementation of [ABSCAB](https://github.com/jonathanschill
 
 | description         | link to file |
 | ------------------- | ----------------------------------------------------- |
-| main implementation | [`abscab.f08`](src/main/fortran/abscab.f08)           |
-| unit tests          | [`test_abscab.f08`](src/test/fortran/test_abscab.f08) |
-| demo code           | [`demo_abscab.f08`](src/test/fortran/demo_abscab.f08) |
+| main implementation | [`abscab.f08`](abscab/abscab.f08)           |
+| unit tests          | [`test_abscab.f08`](test/test_abscab.f08) |
+| demo code           | [`demo_abscab.f08`](test/demo_abscab.f08) |
 | parallelized        | :heavy_check_mark: (OpenMP)                           |

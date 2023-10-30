@@ -979,9 +979,6 @@ subroutine kernelVectorPotentialPolygonFilament ( &
         aXSum(:,:) = 0.0_wp
         aYSum(:,:) = 0.0_wp
         aZSum(:,:) = 0.0_wp
-    else
-        ! initialize target array to zero
-        vectorPotential(:, idxEvalStart:idxEvalEnd) = 0.0_wp
     end if ! useCompensatedSummation
 
     x_i = vertices(1, idxSourceStart)
@@ -1139,9 +1136,6 @@ subroutine kernelVectorPotentialPolygonFilamentVertexSupplier ( &
         aXSum(:,:) = 0.0_wp
         aYSum(:,:) = 0.0_wp
         aZSum(:,:) = 0.0_wp
-    else
-        ! initialize target array to zero
-        vectorPotential(:, idxEvalStart:idxEvalEnd) = 0.0_wp
     end if ! useCompensatedSummation
 
     call vertexSupplier(idxSourceStart, pointData)
@@ -1294,9 +1288,6 @@ subroutine kernelMagneticFieldPolygonFilament ( &
         bXSum(:,:) = 0.0_wp
         bYSum(:,:) = 0.0_wp
         bZSum(:,:) = 0.0_wp
-    else
-        ! initialize target array to zero
-        magneticField(:, idxEvalStart:idxEvalEnd) = 0.0_wp
     end if ! useCompensatedSummation
 
     x_i = vertices(1, idxSourceStart)
@@ -1475,9 +1466,6 @@ subroutine kernelMagneticFieldPolygonFilamentVertexSupplier ( &
         bXSum(:,:) = 0.0_wp
         bYSum(:,:) = 0.0_wp
         bZSum(:,:) = 0.0_wp
-    else
-        ! initialize target array to zero
-        magneticField(:, idxEvalStart:idxEvalEnd) = 0.0_wp
     end if ! useCompensatedSummation
 
     call vertexSupplier(idxSourceStart, pointData)
@@ -1622,7 +1610,8 @@ subroutine vectorPotentialPolygonFilament( &
     logical :: actUseCompSum
 
     integer :: i, idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd, &
-               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread
+               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread, &
+               numSegments, nSourceRemainder, nEvalRemainder
     real(wp), dimension(3) :: sumX, sumY, sumZ
     real(wp), dimension(:, :, :), allocatable :: vecPotContribs
 
@@ -1646,20 +1635,21 @@ subroutine vectorPotentialPolygonFilament( &
         return
     end if
 
+    numSegments = numVertices - 1
+
     if (actNumProc .lt. 1) then
         print *, "need at least 1 processor, but got only ", actNumProc
         return
     end if
 
     if (current .eq. 0.0_wp) then
-        vectorPotential(:, :) = 0.0_wp
         return
     end if
 
     if (actNumProc .eq. 1) then
         ! single-threaded call
         idxSourceStart = 1
-        idxSourceEnd   = numVertices-1
+        idxSourceEnd   = numSegments
         idxEvalStart   = 1
         idxEvalEnd     = numEvalPos
         call kernelVectorPotentialPolygonFilament( &
@@ -1671,23 +1661,27 @@ subroutine vectorPotentialPolygonFilament( &
     else
         ! use multithreading
 
-        if (numVertices-1 .gt. numEvalPos) then
-            ! parallelize over nSource-1
+        if (numSegments .gt. numEvalPos) then
+            ! parallelize over numSegments
 
             ! Note that each thread needs its own copy of the vectorPotential array,
             ! so this approach might need quite some memory in case the number of
             ! threads and the number of evaluation points is large.
 
-            if (numVertices-1 .lt. actNumProc) then
-                nThreads       = numVertices-1
-                nSourcePerThread = 1
-            else
-                nThreads = actNumProc
+            if (numSegments < actNumProc) then
+                nThreads = numSegments;
 
-                ! It is better that many threads do more than one thread needs to do more.
-                nSourcePerThread = int(ceiling(real(numVertices-1, kind=wp) / &
-                                          nThreads))
+                nSourcePerThread = 1
+                nSourceRemainder = 0
+            else
+                nThreads = actNumProc;
+
+                nSourcePerThread = numSegments / nThreads
+                nSourceRemainder = mod(numSegments, nThreads)
             end if
+
+            idxEvalStart = 1
+            idxEvalEnd   = numEvalPos
 
             allocate(vecPotContribs(3, numEvalPos, nThreads), stat=istat)
             if (istat .ne. 0) then
@@ -1700,11 +1694,16 @@ subroutine vectorPotentialPolygonFilament( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart =      idxThread    * nSourcePerThread + 1
-                idxSourceEnd   = min((idxThread+1) * nSourcePerThread, &
-                                     numVertices-1)
-                idxEvalStart   = 1
-                idxEvalEnd     = numEvalPos
+
+                idxSourceStart =  idxThread      * nSourcePerThread + 1
+                idxSourceEnd   = (idxThread + 1) * nSourcePerThread + 1
+                if (idxThread .lt. nSourceRemainder) then
+                    idxSourceStart = idxSourceStart + idxThread
+                    idxSourceEnd   = idxSourceEnd   + idxThread
+                else
+                    idxSourceStart = idxSourceStart + nSourceRemainder
+                    idxSourceEnd   = idxSourceEnd   + nSourceRemainder
+                end if
 
                 call kernelVectorPotentialPolygonFilament( &
                         vertices, current, &
@@ -1737,7 +1736,6 @@ subroutine vectorPotentialPolygonFilament( &
                     return
                 end if
             else
-                vectorPotential(:, :) = 0.0_wp
                 do idxThread = 0, nThreads-1
                     do i = 1, numEvalPos
                         vectorPotential(:, i) = vectorPotential(:, i) &
@@ -1745,16 +1743,22 @@ subroutine vectorPotentialPolygonFilament( &
                     end do ! i = 1, numEvalPos
                 end do ! idxThread = 0, nThreads-1
             end if ! actUseCompSum
-        else ! numVertices-1 .gt. numEvalPos
-            ! parallelize over nEval
+        else ! numSegments .gt. numEvalPos
+            ! parallelize over numEvalPos
+
+            idxSourceStart = 1
+            idxSourceEnd   = numSegments
 
             if (numEvalPos .lt. actNumProc) then
-                nThreads       = numEvalPos
+                nThreads = numEvalPos
+
                 nEvalPerThread = 1
+                nEvalRemainder = 0
             else
                 nThreads = actNumProc
-                nEvalPerThread = int(ceiling(real(numEvalPos, kind=wp) / &
-                                          nThreads))
+
+                nEvalPerThread = numEvalPos / actNumProc
+                nEvalRemainder = mod(numEvalPos, actNumProc)
             end if
 
             ! parallelized evaluation
@@ -1762,11 +1766,16 @@ subroutine vectorPotentialPolygonFilament( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart = 1
-                idxSourceEnd   = numVertices-1
-                idxEvalStart   =      idxThread    * nEvalPerThread + 1
-                idxEvalEnd     = min((idxThread+1) * nEvalPerThread, &
-                                     numEvalPos)
+
+                idxEvalStart =  idxThread      * nEvalPerThread + 1
+                idxEvalEnd   = (idxThread + 1) * nEvalPerThread + 1
+                if (idxThread .lt. nEvalRemainder) then
+                    idxEvalStart = idxEvalStart + idxThread
+                    idxEvalEnd   = idxEvalEnd   + idxThread
+                else
+                    idxEvalStart = idxEvalStart + nEvalRemainder
+                    idxEvalEnd   = idxEvalEnd   + nEvalRemainder
+                end if
 
                 call kernelVectorPotentialPolygonFilament( &
                         vertices, current, &
@@ -1815,7 +1824,8 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
     logical :: actUseCompSum
 
     integer :: i, idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd, &
-               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread
+               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread, &
+               numSegments, nSourceRemainder, nEvalRemainder
     real(wp), dimension(3) :: sumX, sumY, sumZ
     real(wp), dimension(:, :, :), allocatable :: vecPotContribs
 
@@ -1839,6 +1849,8 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
         return
     end if
 
+    numSegments = numVertices - 1
+
     if (actNumProc .lt. 1) then
         print *, "need at least 1 processor, but got only ", actNumProc
         return
@@ -1852,7 +1864,7 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
     if (actNumProc .eq. 1) then
         ! single-threaded call
         idxSourceStart = 1
-        idxSourceEnd   = numVertices-1
+        idxSourceEnd   = numSegments
         idxEvalStart   = 1
         idxEvalEnd     = numEvalPos
         call kernelVectorPotentialPolygonFilamentVertexSupplier( &
@@ -1864,23 +1876,27 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
     else
         ! use multithreading
 
-        if (numVertices-1 .gt. numEvalPos) then
-            ! parallelize over nSource-1
+        if (numSegments .gt. numEvalPos) then
+            ! parallelize over numSegments
 
             ! Note that each thread needs its own copy of the vectorPotential array,
             ! so this approach might need quite some memory in case the number of
             ! threads and the number of evaluation points is large.
 
-            if (numVertices-1 .lt. actNumProc) then
-                nThreads       = numVertices-1
-                nSourcePerThread = 1
-            else
-                nThreads = actNumProc
+            if (numSegments < actNumProc) then
+                nThreads = numSegments;
 
-                ! It is better that many threads do more than one thread needs to do more.
-                nSourcePerThread = int(ceiling(real(numVertices-1, kind=wp) / &
-                                          nThreads))
+                nSourcePerThread = 1
+                nSourceRemainder = 0
+            else
+                nThreads = actNumProc;
+
+                nSourcePerThread = numSegments / nThreads
+                nSourceRemainder = mod(numSegments, nThreads)
             end if
+
+            idxEvalStart = 1
+            idxEvalEnd   = numEvalPos
 
             allocate(vecPotContribs(3, numEvalPos, nThreads), stat=istat)
             if (istat .ne. 0) then
@@ -1893,11 +1909,15 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart =      idxThread    * nSourcePerThread + 1
-                idxSourceEnd   = min((idxThread+1) * nSourcePerThread, &
-                                     numVertices-1)
-                idxEvalStart   = 1
-                idxEvalEnd     = numEvalPos
+                idxSourceStart =  idxThread      * nSourcePerThread + 1
+                idxSourceEnd   = (idxThread + 1) * nSourcePerThread + 1
+                if (idxThread .lt. nSourceRemainder) then
+                    idxSourceStart = idxSourceStart + idxThread
+                    idxSourceEnd   = idxSourceEnd   + idxThread
+                else
+                    idxSourceStart = idxSourceStart + nSourceRemainder
+                    idxSourceEnd   = idxSourceEnd   + nSourceRemainder
+                end if
 
                 call kernelVectorPotentialPolygonFilamentVertexSupplier( &
                         vertexSupplier, current, &
@@ -1930,7 +1950,6 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
                     return
                 end if
             else
-                vectorPotential(:, :) = 0.0_wp
                 do idxThread = 0, nThreads-1
                     do i = 1, numEvalPos
                         vectorPotential(:, i) = vectorPotential(:, i) &
@@ -1938,16 +1957,22 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
                     end do ! i = 1, numEvalPos
                 end do ! idxThread = 0, nThreads-1
             end if ! actUseCompSum
-        else ! numVertices-1 .gt. numEvalPos
-            ! parallelize over nEval
+        else ! numSegments .gt. numEvalPos
+            ! parallelize over numEvalPos
+
+            idxSourceStart = 1
+            idxSourceEnd   = numSegments
 
             if (numEvalPos .lt. actNumProc) then
-                nThreads       = numEvalPos
+                nThreads = numEvalPos
+
                 nEvalPerThread = 1
+                nEvalRemainder = 0
             else
                 nThreads = actNumProc
-                nEvalPerThread = int(ceiling(real(numEvalPos, kind=wp) / &
-                                          nThreads))
+
+                nEvalPerThread = numEvalPos / actNumProc
+                nEvalRemainder = mod(numEvalPos, actNumProc)
             end if
 
             ! parallelized evaluation
@@ -1955,11 +1980,15 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart = 1
-                idxSourceEnd   = numVertices-1
-                idxEvalStart   =      idxThread    * nEvalPerThread + 1
-                idxEvalEnd     = min((idxThread+1) * nEvalPerThread, &
-                                     numEvalPos)
+                idxEvalStart =  idxThread      * nEvalPerThread + 1
+                idxEvalEnd   = (idxThread + 1) * nEvalPerThread + 1
+                if (idxThread .lt. nEvalRemainder) then
+                    idxEvalStart = idxEvalStart + idxThread
+                    idxEvalEnd   = idxEvalEnd   + idxThread
+                else
+                    idxEvalStart = idxEvalStart + nEvalRemainder
+                    idxEvalEnd   = idxEvalEnd   + nEvalRemainder
+                end if
 
                 call kernelVectorPotentialPolygonFilamentVertexSupplier( &
                         vertexSupplier, current, &
@@ -2000,7 +2029,8 @@ subroutine magneticFieldPolygonFilament( &
     logical :: actUseCompSum
 
     integer :: i, idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd, &
-               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread
+               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread, &
+               numSegments, nSourceRemainder, nEvalRemainder
     real(wp), dimension(3) :: sumX, sumY, sumZ
     real(wp), dimension(:, :, :), allocatable :: magFldContribs
 
@@ -2024,6 +2054,8 @@ subroutine magneticFieldPolygonFilament( &
         return
     end if
 
+    numSegments = numVertices - 1
+
     if (actNumProc .lt. 1) then
         print *, "need at least 1 processor, but got only ", actNumProc
         return
@@ -2037,7 +2069,7 @@ subroutine magneticFieldPolygonFilament( &
     if (actNumProc .eq. 1) then
         ! single-threaded call
         idxSourceStart = 1
-        idxSourceEnd   = numVertices-1
+        idxSourceEnd   = numSegments
         idxEvalStart   = 1
         idxEvalEnd     = numEvalPos
         call kernelMagneticFieldPolygonFilament( &
@@ -2049,23 +2081,27 @@ subroutine magneticFieldPolygonFilament( &
     else
         ! use multithreading
 
-        if (numVertices-1 .gt. numEvalPos) then
-            ! parallelize over nSource-1
+        if (numSegments .gt. numEvalPos) then
+            ! parallelize over numSegments
 
             ! Note that each thread needs its own copy of the magneticField array,
             ! so this approach might need quite some memory in case the number of
             ! threads and the number of evaluation points is large.
 
-            if (numVertices-1 .lt. actNumProc) then
-                nThreads       = numVertices-1
-                nSourcePerThread = 1
-            else
-                nThreads = actNumProc
+            if (numSegments < actNumProc) then
+                nThreads = numSegments;
 
-                ! It is better that many threads do more than one thread needs to do more.
-                nSourcePerThread = int(ceiling(real(numVertices-1, kind=wp) / &
-                                          nThreads))
+                nSourcePerThread = 1
+                nSourceRemainder = 0
+            else
+                nThreads = actNumProc;
+
+                nSourcePerThread = numSegments / nThreads
+                nSourceRemainder = mod(numSegments, nThreads)
             end if
+
+            idxEvalStart = 1
+            idxEvalEnd   = numEvalPos
 
             allocate(magFldContribs(3, numEvalPos, nThreads), stat=istat)
             if (istat .ne. 0) then
@@ -2078,11 +2114,15 @@ subroutine magneticFieldPolygonFilament( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart =      idxThread    * nSourcePerThread + 1
-                idxSourceEnd   = min((idxThread+1) * nSourcePerThread, &
-                                     numVertices-1)
-                idxEvalStart   = 1
-                idxEvalEnd     = numEvalPos
+                idxSourceStart =  idxThread      * nSourcePerThread + 1
+                idxSourceEnd   = (idxThread + 1) * nSourcePerThread + 1
+                if (idxThread .lt. nSourceRemainder) then
+                    idxSourceStart = idxSourceStart + idxThread
+                    idxSourceEnd   = idxSourceEnd   + idxThread
+                else
+                    idxSourceStart = idxSourceStart + nSourceRemainder
+                    idxSourceEnd   = idxSourceEnd   + nSourceRemainder
+                end if
 
                 call kernelMagneticFieldPolygonFilament( &
                         vertices, current, &
@@ -2115,7 +2155,6 @@ subroutine magneticFieldPolygonFilament( &
                     return
                 end if
             else
-                magneticField(:, :) = 0.0_wp
                 do idxThread = 0, nThreads-1
                     do i = 1, numEvalPos
                         magneticField(:, i) = magneticField(:, i) &
@@ -2123,16 +2162,22 @@ subroutine magneticFieldPolygonFilament( &
                     end do ! i = 1, numEvalPos
                 end do ! idxThread = 0, nThreads-1
             end if ! actUseCompSum
-        else ! numVertices-1 .gt. numEvalPos
-            ! parallelize over nEval
+        else ! numSegments .gt. numEvalPos
+            ! parallelize over numEvalPos
+
+            idxSourceStart = 1
+            idxSourceEnd   = numSegments
 
             if (numEvalPos .lt. actNumProc) then
-                nThreads       = numEvalPos
+                nThreads = numEvalPos
+
                 nEvalPerThread = 1
+                nEvalRemainder = 0
             else
                 nThreads = actNumProc
-                nEvalPerThread = int(ceiling(real(numEvalPos, kind=wp) / &
-                                          nThreads))
+
+                nEvalPerThread = numEvalPos / actNumProc
+                nEvalRemainder = mod(numEvalPos, actNumProc)
             end if
 
             ! parallelized evaluation
@@ -2140,11 +2185,15 @@ subroutine magneticFieldPolygonFilament( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart = 1
-                idxSourceEnd   = numVertices-1
-                idxEvalStart   =      idxThread    * nEvalPerThread + 1
-                idxEvalEnd     = min((idxThread+1) * nEvalPerThread, &
-                                     numEvalPos)
+                idxEvalStart =  idxThread      * nEvalPerThread + 1
+                idxEvalEnd   = (idxThread + 1) * nEvalPerThread + 1
+                if (idxThread .lt. nEvalRemainder) then
+                    idxEvalStart = idxEvalStart + idxThread
+                    idxEvalEnd   = idxEvalEnd   + idxThread
+                else
+                    idxEvalStart = idxEvalStart + nEvalRemainder
+                    idxEvalEnd   = idxEvalEnd   + nEvalRemainder
+                end if
 
                 call kernelMagneticFieldPolygonFilament( &
                         vertices, current, &
@@ -2193,7 +2242,8 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
     logical :: actUseCompSum
 
     integer :: i, idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd, &
-               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread
+               nThreads, nSourcePerThread, nEvalPerThread, istat, idxThread, &
+               numSegments, nSourceRemainder, nEvalRemainder
     real(wp), dimension(3) :: sumX, sumY, sumZ
     real(wp), dimension(:, :, :), allocatable :: magFldContribs
 
@@ -2217,6 +2267,8 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
         return
     end if
 
+    numSegments = numVertices - 1
+
     if (actNumProc .lt. 1) then
         print *, "need at least 1 processor, but got only ", actNumProc
         return
@@ -2230,7 +2282,7 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
     if (actNumProc .eq. 1) then
         ! single-threaded call
         idxSourceStart = 1
-        idxSourceEnd   = numVertices-1
+        idxSourceEnd   = numSegments
         idxEvalStart   = 1
         idxEvalEnd     = numEvalPos
         call kernelMagneticFieldPolygonFilamentVertexSupplier( &
@@ -2242,23 +2294,27 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
     else
         ! use multithreading
 
-        if (numVertices-1 .gt. numEvalPos) then
-            ! parallelize over nSource-1
+        if (numSegments .gt. numEvalPos) then
+            ! parallelize over numSegments
 
             ! Note that each thread needs its own copy of the vectorPotential array,
             ! so this approach might need quite some memory in case the number of
             ! threads and the number of evaluation points is large.
 
-            if (numVertices-1 .lt. actNumProc) then
-                nThreads       = numVertices-1
-                nSourcePerThread = 1
-            else
-                nThreads = actNumProc
+            if (numSegments < actNumProc) then
+                nThreads = numSegments;
 
-                ! It is better that many threads do more than one thread needs to do more.
-                nSourcePerThread = int(ceiling(real(numVertices-1, kind=wp) / &
-                                          nThreads))
+                nSourcePerThread = 1
+                nSourceRemainder = 0
+            else
+                nThreads = actNumProc;
+
+                nSourcePerThread = numSegments / nThreads
+                nSourceRemainder = mod(numSegments, nThreads)
             end if
+
+            idxEvalStart = 1
+            idxEvalEnd   = numEvalPos
 
             allocate(magFldContribs(3, numEvalPos, nThreads), stat=istat)
             if (istat .ne. 0) then
@@ -2271,11 +2327,15 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart =      idxThread    * nSourcePerThread + 1
-                idxSourceEnd   = min((idxThread+1) * nSourcePerThread, &
-                                     numVertices-1)
-                idxEvalStart   = 1
-                idxEvalEnd     = numEvalPos
+                idxSourceStart =  idxThread      * nSourcePerThread + 1
+                idxSourceEnd   = (idxThread + 1) * nSourcePerThread + 1
+                if (idxThread .lt. nSourceRemainder) then
+                    idxSourceStart = idxSourceStart + idxThread
+                    idxSourceEnd   = idxSourceEnd   + idxThread
+                else
+                    idxSourceStart = idxSourceStart + nSourceRemainder
+                    idxSourceEnd   = idxSourceEnd   + nSourceRemainder
+                end if
 
                 call kernelMagneticFieldPolygonFilamentVertexSupplier( &
                         vertexSupplier, current, &
@@ -2308,7 +2368,6 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
                     return
                 end if
             else
-                magneticField(:, :) = 0.0_wp
                 do idxThread = 0, nThreads-1
                     do i = 1, numEvalPos
                         magneticField(:, i) = magneticField(:, i) &
@@ -2316,16 +2375,22 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
                     end do ! i = 1, numEvalPos
                 end do ! idxThread = 0, nThreads-1
             end if ! actUseCompSum
-        else ! numVertices-1 .gt. numEvalPos
-            ! parallelize over nEval
+        else ! numSegments .gt. numEvalPos
+            ! parallelize over numEvalPos
+
+            idxSourceStart = 1
+            idxSourceEnd   = numSegments
 
             if (numEvalPos .lt. actNumProc) then
-                nThreads       = numEvalPos
+                nThreads = numEvalPos
+
                 nEvalPerThread = 1
+                nEvalRemainder = 0
             else
                 nThreads = actNumProc
-                nEvalPerThread = int(ceiling(real(numEvalPos, kind=wp) / &
-                                          nThreads))
+
+                nEvalPerThread = numEvalPos / actNumProc
+                nEvalRemainder = mod(numEvalPos, actNumProc)
             end if
 
             ! parallelized evaluation
@@ -2333,11 +2398,15 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
 !$omp parallel do private(idxSourceStart, idxSourceEnd, idxEvalStart, idxEvalEnd)
 !$endif // _OPENMP
             do idxThread = 0, nThreads-1
-                idxSourceStart = 1
-                idxSourceEnd   = numVertices-1
-                idxEvalStart   =      idxThread    * nEvalPerThread + 1
-                idxEvalEnd     = min((idxThread+1) * nEvalPerThread, &
-                                     numEvalPos)
+                idxEvalStart =  idxThread      * nEvalPerThread + 1
+                idxEvalEnd   = (idxThread + 1) * nEvalPerThread + 1
+                if (idxThread .lt. nEvalRemainder) then
+                    idxEvalStart = idxEvalStart + idxThread
+                    idxEvalEnd   = idxEvalEnd   + idxThread
+                else
+                    idxEvalStart = idxEvalStart + nEvalRemainder
+                    idxEvalEnd   = idxEvalEnd   + nEvalRemainder
+                end if
 
                 call kernelMagneticFieldPolygonFilamentVertexSupplier( &
                         vertexSupplier, current, &

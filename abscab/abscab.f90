@@ -1857,7 +1857,6 @@ subroutine vectorPotentialPolygonFilamentVertexSupplier( &
     end if
 
     if (current .eq. 0.0_wp) then
-        vectorPotential(:, :) = 0.0_wp
         return
     end if
 
@@ -2062,7 +2061,6 @@ subroutine magneticFieldPolygonFilament( &
     end if
 
     if (current .eq. 0.0_wp) then
-        magneticField(:, :) = 0.0_wp
         return
     end if
 
@@ -2275,7 +2273,6 @@ subroutine magneticFieldPolygonFilamentVertexSupplier( &
     end if
 
     if (current .eq. 0.0_wp) then
-        magneticField(:, :) = 0.0_wp
         return
     end if
 
